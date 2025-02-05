@@ -1,0 +1,45 @@
+group 'com.moca.flutter'
+version '1.0'
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:7.0.3'
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven {
+            url "https://maven.mocaplatform.com/artifactory/moca"
+        }
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    namespace 'com.moca.flutter'
+    compileSdk 34
+
+    defaultConfig {
+        minSdkVersion 21
+        targetSdk 34
+        versionCode 1
+        versionName '3.7.0'
+    }
+    lintOptions {
+        disable 'InvalidPackage'
+    }
+}
+
+dependencies {
+    implementation 'com.mocaplatform:moca-android-sdk:3.8.0'
+    implementation 'com.google.code.gson:gson:2.11.0'
+}
