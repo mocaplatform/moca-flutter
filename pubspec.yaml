@@ -1,6 +1,6 @@
 name: moca_flutter
 description: Flutter plugin for Moca SDK. Moca is an enterprise geofencing platform for apps.
-version: 3.0.0
+version: 3.8.0
 homepage: https://github.com/innoquant/moca-flutter
 
 environment:
