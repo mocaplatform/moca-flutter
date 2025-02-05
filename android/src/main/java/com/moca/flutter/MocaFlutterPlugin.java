@@ -4,16 +4,13 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.location.Location;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
-import android.preference.PreferenceManager;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import com.google.gson.Gson;
 import com.innoquant.moca.MOCA;
@@ -41,8 +38,6 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
@@ -66,8 +61,6 @@ public class MocaFlutterPlugin implements FlutterPlugin, ActivityAware {
     @SuppressLint("StaticFieldLeak")
     private static Application mContext;
 
-    private static boolean _sdkInitialized;
-
     @Override
     public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
         Context ctx = binding.getApplicationContext();
@@ -77,7 +70,7 @@ public class MocaFlutterPlugin implements FlutterPlugin, ActivityAware {
             mContext = (Application) ctx.getApplicationContext();
         }
         channel = new MethodChannel(binding.getBinaryMessenger(), "moca_flutter");
-        callHandler = new MocaMethodCallHandler();
+        callHandler = new MocaMethodCallHandler(channel);
         channel.setMethodCallHandler(callHandler);
         // init Moca SDK
         autoInitializeSDK();
@@ -114,10 +107,16 @@ public class MocaFlutterPlugin implements FlutterPlugin, ActivityAware {
     }
 
     private boolean autoInitializeSDK() {
+        if (mContext == null) {
+            return false;
+        }
         try {
             // recover config, if any
             MOCAConfig config = MOCAConfig.getDefault(mContext);
             MOCA.initializeSDK(mContext, config);
+            MocaFlutterReceiver receiver = new MocaFlutterReceiver(channel);
+            MOCA.addRegionObserver(receiver);
+            MOCA.setCustomActionHandler(receiver);
             return true;
         } catch (Exception ignored) {
             // no configuration yet
@@ -128,8 +127,15 @@ public class MocaFlutterPlugin implements FlutterPlugin, ActivityAware {
 
 
     public static class MocaMethodCallHandler implements MethodCallHandler {
+
+        private final MethodChannel channel;
+
+        public MocaMethodCallHandler(@NonNull MethodChannel channel) {
+            this.channel = channel;
+        }
+        
         @Override
-        public void onMethodCall(@NonNull MethodCall call, @NonNull final Result result) {
+        public void onMethodCall(@NonNull MethodCall call, @NonNull Result result) {
             try {
                 switch (call.method) {
                     case "initializeSDK":
@@ -140,6 +146,9 @@ public class MocaFlutterPlugin implements FlutterPlugin, ActivityAware {
                         break;
                     case "setLogLevel":
                         setLogLevel(call, result);
+                        break;
+                    case "setCustomNavigator":
+                        setCustomNavigator(call, result);
                         break;
                     case "initialized":
                         initialized(result);
@@ -296,7 +305,6 @@ public class MocaFlutterPlugin implements FlutterPlugin, ActivityAware {
         MocaFlutterReceiver receiver = new MocaFlutterReceiver(channel);
         MOCA.addRegionObserver(receiver);
         MOCA.setCustomActionHandler(receiver);
-        MOCA.setCustomNavigator(receiver);
         result.success(true);
     }
 
@@ -379,6 +387,22 @@ public class MocaFlutterPlugin implements FlutterPlugin, ActivityAware {
             return;
         }
         MOCA.setEventTrackingEnabled(enabled);
+        result.success(true);
+    }
+
+    private static void setCustomNavigator(MethodCall call, Result result) {
+        Boolean enabled = call.argument("enabled");
+        if (enabled == null) {
+            result.error("enabled is null",
+                    "enabled flag is required", null);
+            return;
+        }
+        if (enabled) {
+            MocaFlutterNavigator navigator = new MocaFlutterNavigator(channel);
+            MOCA.setCustomNavigator(navigator);
+        } else {
+            MOCA.setCustomNavigator(null);
+        }
         result.success(true);
     }
 
@@ -742,8 +766,7 @@ public class MocaFlutterPlugin implements FlutterPlugin, ActivityAware {
     public static class MocaFlutterReceiver implements MOCARegion.PlaceEventsObserver,
             MOCARegion.BeaconEventsObserver,
             MOCARegion.RegionGroupEventsObserver,
-            Action.CustomActionHandler,
-            MOCANavigator {
+            Action.CustomActionHandler {
         private final MethodChannel channel;
 
         MocaFlutterReceiver(MethodChannel channel) {
@@ -899,39 +922,40 @@ public class MocaFlutterPlugin implements FlutterPlugin, ActivityAware {
             }
         }
 
+    }
+
+    public static class MocaFlutterNavigator implements MOCANavigator {
+        private final MethodChannel channel;
+
+        MocaFlutterNavigator(@NonNull MethodChannel channel) {
+            this.channel = channel;
+        }
+
+        private List<Object> uriToArgs(@NonNull Uri uri) throws JSONException {
+            JSONObject obj = new JSONObject();
+            obj.put("uri", uri);
+            HashMap<String, Object> res = new Gson().fromJson(obj.toString(), HashMap.class);
+            final List<Object> args = new ArrayList<>();
+            args.add(0);
+            args.add(res);
+            return args;
+        }
 
         @Override
         public boolean gotoUri(@NonNull Context context, @NonNull Uri uri) {
-            // Use a CountDownLatch to block until we get a response (or timeout).
-            final CountDownLatch latch = new CountDownLatch(1);
-            final boolean[] handled = { false };
-            synchronized (lock) {
-                runOnMainThread(() -> channel.invokeMethod("gotoUri", uri.toString(), new Result() {
-                    @Override
-                    public void success(@Nullable Object result) {
-                        if (result instanceof Boolean) {
-                            handled[0] = (Boolean) result;
-                        }
-                        latch.countDown();
-                    }
-
-                    @Override
-                    public void error(@NonNull String errorCode, @Nullable String errorMessage, @Nullable Object errorDetails) {
-                        latch.countDown();
-                    }
-
-                    @Override
-                    public void notImplemented() {
-                        latch.countDown();
-                    }
-                }));
-            }
             try {
-                latch.await(5, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
+                final List<Object> args = uriToArgs(uri);
+                synchronized (lock) {
+                    runOnMainThread(() -> {
+                        channel.invokeMethod("onGotoUri", args);
+                    });
+                }
+                // we assume here Flutter handled the deeplink
+                return true;
+            } catch (Exception e) {
                 Log.e(TAG, e.toString());
+                return false;
             }
-            return handled[0];
         }
 
     }

@@ -11,6 +11,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  shared_preferences: ^2.1.1  
+  url_launcher: ^6.1.7 
+  fluttertoast: ^8.2.1
 
   moca_flutter:
     # When depending on this package from a real application you should use:

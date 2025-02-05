@@ -78,11 +78,12 @@ void callbackDispatcher() {
   });
 }
 
+
 /// Callback type definitions.
 typedef MocaErrorCallback = void Function(Map<dynamic, dynamic> errorEvent);
 typedef MocaRegionCallback = void Function(String verb, Map<dynamic, dynamic> region);
 typedef MocaActionCallback = void Function(String action, Map<dynamic, dynamic> args);
-typedef MocaNavigatorCallback = bool Function(String url);
+typedef MocaNavigatorCallback = void Function(String uri);
 typedef MocaBackgroundCallback = void Function(Map<dynamic, dynamic> event);
 
 /// Observer to track Flutter screen transitions and call Moca.trackScreen.
@@ -172,6 +173,7 @@ class Moca {
       'initializeSDK',
       {'appKey': appKey, 'appSecret': appSecret},
     );
+    print("initializeSDK");
     if (result.isSuccess) {
       // Once the SDK is initialized, set up the foreground callback handler.
       _channel.setMethodCallHandler(_handleMethodCall);
@@ -217,17 +219,21 @@ class Moca {
     });
   }
 
+
+
   /// This is the foreground method call handler. It is only invoked when the app
   /// is in the foreground. If the app is in the background, the handler logs the event
   /// and skips calling the foreground callbacks (background events are handled
   /// by the [callbackDispatcher]).
   static Future<dynamic> _handleMethodCall(MethodCall call) async {
+    //debugPrint("_handleMethodCall");
+
     // Check the app lifecycle state: if the app is not resumed (i.e. in background),
     // skip the foreground callback.
-    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
-      developer.log("App in background. Skipping foreground callback for ${call.method}",
-          name: 'Moca');
-      return null;
+    final state = WidgetsBinding.instance.lifecycleState;
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+        developer.log("App in background. Skipping foreground callback for ${call.method}", name: 'Moca');
+        return null;
     }
 
     final args = call.arguments;
@@ -255,14 +261,11 @@ class Moca {
         foregroundActionCallback?.call('custom', props);
         break;
       case 'onGotoUri':
-        final String uri = args[0] as String;
-        if (foregroundNavigatorCallback != null) {
-           // The navigator callback should return true if the URL is handled,
-           // or false if further processing is needed by the native SDK.
-           final bool handled = foregroundNavigatorCallback!(uri);
-           return handled;
+        final String uri = props?['uri'] ?? null;
+        if (uri != null) {
+          foregroundNavigatorCallback?.call(uri);
         }
-        return false;
+        break;
       case 'error':
         foregroundErrorCallback?.call(props);
         break;
@@ -485,8 +488,9 @@ class Moca {
   }
 
   /// Register a foreground navigation callback.
-  static void onNavigator(MocaNavigatorCallback? callback) {
+  static Future<MocaResult<bool?>> onNavigator(MocaNavigatorCallback? callback) async {
     foregroundNavigatorCallback = callback;
+    return await _invokeMethod<bool>('setCustomNavigator', {'enabled': callback != null});
   }
 
   /// Register a foreground error callback.

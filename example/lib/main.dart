@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:moca_flutter/moca_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/services.dart'; // Needed only for Clipboard
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 
 void main() {
   runApp(MaterialApp(
@@ -82,7 +85,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     Moca.onNavigator((uri) {
       // Implement handling of known deep links here
       // and then return true if handled.      
-
       setState(() {
         _receivedEvent = "Open deeplink $uri";
       });
@@ -91,36 +93,94 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           _receivedEvent = "";
         });
       });
-
-      // Otherwise let SDK handle deep links by default.
-      return false;
+      // Parse the string into a Uri.
+      final url = Uri.tryParse(uri);
+      if (url != null) {
+          // Check internal deeplinks
+          if (uri.endsWith('/productSearch')) {
+            // Navigate to the product search page.
+            Navigator.pushNamed(context, '/productSearch');
+          } else {
+            // Check asynchronously if the external URL can be launched.
+            canLaunchUrl(url).then((canLaunch) {
+              if (canLaunch) {
+                // Open the URL in the default external browser.
+                launchUrl(url, mode: LaunchMode.externalApplication);
+              } else {
+                showMyToast("Cannot open deeplink $uri");
+              }
+            });
+          }
+      }
     });
   }
 
-/// Requests push notification and location permissions by first showing an 
-  /// informational dialog (with a “Continue” button) before invoking the OS prompt.
+  /// Helper functions to get and set persistent flags using SharedPreferences.
+  Future<bool> _getFlag(String key) async {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(key) ?? false;
+  }
+
+  Future<void> _setFlag(String key, bool value) async {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(key, value);
+  }
+
+  void showMyToast(String message) {
+    Fluttertoast.showToast(
+      msg: message,
+      toastLength: Toast.LENGTH_SHORT, // LENGTH_SHORT or LENGTH_LONG
+      gravity: ToastGravity.BOTTOM,    // Position of the toast
+      timeInSecForIosWeb: 1,           // Duration for iOS and Web
+      backgroundColor: Colors.black54,
+      textColor: Colors.white,
+      fontSize: 16.0,
+    );
+  }
+
+  /// Requests push notification and location permissions.
+  /// Each info dialog is shown only if:
+  ///   - The permission is not yet granted.
+  ///   - The info dialog has not been shown before (persisted via SharedPreferences).
   Future<void> _requestPermissions() async {
-    // Show information about push notifications.
-    await _showInfoDialog(
-      title: "Push Notifications",
-      message:
-          "We use push notifications to keep you updated about local events, exclusive offers, and personalized experiences based on your location. Tap 'Continue' to enable push notifications.",
-    );
+    // --- Push Notifications ---
+    PermissionStatus notificationStatus = await Permission.notification.status;
+    if (notificationStatus.isGranted) {
+      print("Push notifications permission already granted.");
+    } else {
+      bool pushAsked = await _getFlag('pushPermissionAsked');
+      if (!pushAsked) {
+        await _showInfoDialog(
+          title: "Push Notifications",
+          message:
+              "We use push notifications to keep you updated about local events, exclusive offers, and personalized experiences based on your location. Tap 'Continue' to enable push notifications.",
+        );
+        await _setFlag('pushPermissionAsked', true);
+      }
+      // Request push notification permission from the OS.
+      PermissionStatus newNotificationStatus = await Permission.notification.request();
+      print("Notification permission status: $newNotificationStatus");
+    }
 
-    // Now, ask the OS for push notification permission.
-    PermissionStatus notificationStatus = await Permission.notification.request();
-    print("Notification permission status: $notificationStatus");
 
-    // Show information about location services.
-    await _showInfoDialog(
-      title: "Location Access",
-      message:
-          "This app uses your location to deliver personalized, location-based experiences such as local deals and event recommendations. Tap 'Continue' to enable location services.",
-    );
-
-    // Now, ask the OS for location permission.
-    PermissionStatus locationStatus = await Permission.location.request();
-    print("Location permission status: $locationStatus");
+    // --- Location Access ---
+    PermissionStatus locationStatus = await Permission.location.status;
+    if (locationStatus.isGranted) {
+      print("Location permission already granted.");
+    } else {
+      bool locationAsked = await _getFlag('locationPermissionAsked');
+      if (!locationAsked) {
+        await _showInfoDialog(
+          title: "Location Access",
+          message:
+              "This app uses your location to deliver personalized, location-based experiences such as local deals and event recommendations. Tap 'Continue' to enable location services.",
+        );
+        await _setFlag('locationPermissionAsked', true);
+      }
+      // Request location permission from the OS.
+      PermissionStatus newLocationStatus = await Permission.location.request();
+      print("Location permission status: $newLocationStatus");
+    }
   }
 
   /// A helper function that shows a simple informational dialog with a "Continue" button.
