@@ -26,7 +26,6 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'dart:io' show Platform;
 import 'dart:developer' as developer;
 
 /// A generic result wrapper that allows the caller to easily check
@@ -205,7 +204,7 @@ class Moca {
       PluginUtilities.getCallbackHandle(callbackDispatcher)!.toRawHandle(),
       PluginUtilities.getCallbackHandle(callback)!.toRawHandle()
     ];
-    return await _invokeMethod<bool>('registerBackgroundTask');
+    return await _invokeMethod<bool>('registerBackgroundTask', args);
   }  
 
   /// Tracks the current screen name by invoking the native method trackScreen.
@@ -261,10 +260,8 @@ class Moca {
         foregroundActionCallback?.call('custom', props);
         break;
       case 'onGotoUri':
-        final String uri = props?['uri'] ?? null;
-        if (uri != null) {
-          foregroundNavigatorCallback?.call(uri);
-        }
+        final String uri = props['uri'];
+        foregroundNavigatorCallback?.call(uri);
         break;
       case 'error':
         foregroundErrorCallback?.call(props);
