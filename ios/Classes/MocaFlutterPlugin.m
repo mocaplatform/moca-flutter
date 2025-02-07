@@ -3,8 +3,19 @@
 #import <MocaSDK/MOCAConfig.h>
 #import <MocaSDK/MOCAInstance.h>
 #import <MocaSDK/MOCAUser.h>
+#import <MocaSDK/MOCARegion.h>
+#import <MocaSDK/MOCAPlace.h>
+#import <MocaSDK/MOCABeacon.h>
+#import <MocaSDK/MOCARegionGroup.h>
+#import <MocaSDK/MOCAExperience.h>
+#import <MocaSDK/MOCACustomActionHandler.h>
 
-@interface MocaFlutterPlugin() <UIApplicationDelegate>
+@interface MocaFlutterPlugin() <UIApplicationDelegate,
+    PlaceEventsObserver,
+    BeaconEventsObserver,
+    RegionGroupEventsObserver,
+    MOCACustomActionHandler
+>
 
 @property (strong, nonatomic) FlutterMethodChannel *channel;
 @property (strong, nonatomic) FlutterMethodChannel *backgroundChannel;
@@ -34,9 +45,10 @@
     }
     self._initialized = NO;
     self.locationManager = [[CLLocationManager alloc] init];
-    //[MOCA setDelegate:self];
     return self;
 }
+
+#pragma mark - UIApplicationDelegate
 
 - (BOOL)application:(UIApplication *)application
 didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
@@ -44,6 +56,54 @@ didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     [self autoInitializeSDK];
     return YES;
 }
+
+
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+       willPresentNotification:(UNNotification *)notification
+         withCompletionHandler:(void (^)(UNNotificationPresentationOptions options))completionHandler {
+    if (MOCA.initialized && [MOCA isMocaNotification:notification]) {
+        [MOCA userNotificationCenter:center
+             willPresentNotification:notification
+               withCompletionHandler:completionHandler];
+    }
+}
+
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+        didReceiveNotification:(UNNotification *)notification
+         withCompletionHandler:(void (^)(void))completionHandler {
+    
+    if (MOCA.initialized && [MOCA isMocaNotification:notification]) {
+        [MOCA userNotificationCenter:center didReceiveNotification:notification withCompletionHandler:completionHandler];
+    }
+}
+
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+didReceiveNotificationResponse:(UNNotificationResponse *)response
+         withCompletionHandler:(void (^)(void))completionHandler {
+    if (MOCA.initialized && [MOCA isMocaNotification:response]) {
+        [MOCA userNotificationCenter:center
+      didReceiveNotificationResponse:response
+               withCompletionHandler:completionHandler];
+    }
+}
+
+- (void)         application:(UIApplication *)application
+didReceiveRemoteNotification:(NSDictionary *)userInfo
+      fetchCompletionHandler:(void (^)(UIBackgroundFetchResult))completionHandler {
+    if (MOCA.initialized && [MOCA isMocaNotification:userInfo]) {
+        [MOCA handleRemoteNotification:userInfo fetchCompletionHandler:completionHandler];
+    }
+}
+
+- (void)  application:(UIApplication *)application
+didRegisterForRemoteNotificationsWithDeviceToken:(NSData *)deviceToken {
+    NSLog(@"deviceToken: %@", deviceToken);
+    if ([MOCA initialized]) {
+        [MOCA registerDeviceToken:deviceToken];
+    }
+}
+
+#pragma mark MocaFlutterPlugin
 
 - (void)handleMethodCall:(FlutterMethodCall*)call result:(FlutterResult)result {
     @try {
@@ -146,8 +206,7 @@ didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     NSString *appKey = [defaults objectForKey:@"MOCA_APP_KEY"];
     NSString *appSecret = [defaults objectForKey:@"MOCA_APP_SECRET"];
     if (appKey && appSecret) {
-        MOCAConfig * config = [MOCAConfig defaultConfigForAppKey:appKey andSecret:appSecret];
-        self._initialized = [MOCA initializeSDK:config];
+        [self performInitSDK:appKey withSecret:appSecret];
     }
     return self._initialized;
 }
@@ -178,13 +237,19 @@ didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     [defaults setObject:appSecret forKey:@"MOCA_APP_SECRET"];
     // Force immediate writing (optional, as iOS automatically synchronizes periodically).
     [defaults synchronize];
+    [self performInitSDK:appKey withSecret:appSecret];
+    result(@(YES));
+}
+
+- (void)performInitSDK:(NSString*)appKey withSecret:(NSString*)appSecret {
     
     if (!self._initialized) {
         // initialize SDK
         MOCAConfig * config = [MOCAConfig defaultConfigForAppKey:appKey andSecret:appSecret];
         self._initialized = [MOCA initializeSDK:config];
+        [MOCA addRegionObserver:self];
+        [MOCA setCustomActionHandler:self];
     }
-    result(@(YES));
 }
 
 #pragma mark - Plugin Method Implementations
@@ -871,5 +936,208 @@ didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
         result (value);
     }
 }
+
+
+#pragma mark PlaceEventsObserver
+
+- (NSArray *)placeToArgs:(MOCAPlace *)place {
+    // Create a mutable dictionary to hold the properties.
+    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+
+    // Set the "name" property if available.
+    dict[@"name"] = place.name;
+    dict[@"id"] = place.identifier;
+    
+    // If the place has a geofence, add its details.
+    CLCircularRegion *geofence = place.geofence;
+    if (geofence) {
+        // Assume radius is a double.
+        dict[@"radius"] = @(geofence.radius);
+        
+        // Assume the geofence has a "center" property returning a CLLocationCoordinate2D.
+        CLLocationCoordinate2D center = geofence.center;
+        dict[@"latitude"] = @(center.latitude);
+        dict[@"longitude"] = @(center.longitude);
+    }
+    
+    // Wrap the dictionary in an array with an initial element (here, 0).
+    NSArray *args = @[@0, dict];
+    return args;
+}
+
+- (void)didEnterPlace:(MOCAPlace *)place {
+    @try {
+        // Convert the 'place' to an array of arguments.
+        NSArray *args = [self placeToArgs:place];
+        
+        // Ensure the call is performed on the main thread.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.channel invokeMethod:@"onEnterGeofence" arguments:args];
+        });
+    }
+    @catch (NSException *exception) {
+        NSLog(@"Error: %@", exception);
+    }
+}
+
+- (void)didExitPlace:(MOCAPlace *)place {
+    @try {
+        // Convert the 'place' to an array of arguments.
+        NSArray *args = [self placeToArgs:place];
+        
+        // Ensure the call is performed on the main thread.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.channel invokeMethod:@"onExitGeofence" arguments:args];
+        });
+    }
+    @catch (NSException *exception) {
+        NSLog(@"Error: %@", exception);
+    }
+}
+
+- (NSArray *)beaconToArgs:(MOCABeacon *)beacon {
+    // Create a mutable dictionary to hold the properties.
+    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+
+    dict[@"name"] = beacon.name;
+    dict[@"id"] = beacon.identifier;
+    
+    // If the place has a geofence, add its details.
+    CLLocation *location = beacon.location;
+    if (location) {
+        CLLocationCoordinate2D center = location.coordinate;
+        dict[@"latitude"] = @(center.latitude);
+        dict[@"longitude"] = @(center.longitude);
+    }
+    
+    // Wrap the dictionary in an array with an initial element (here, 0).
+    NSArray *args = @[@0, dict];
+    return args;
+}
+
+
+- (void)didEnterBeacon:(MOCABeacon *)beacon {
+    @try {
+        // Convert the 'beacon' to an array of arguments.
+        NSArray *args = [self beaconToArgs:beacon];
+        
+        // Ensure the call is performed on the main thread.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.channel invokeMethod:@"onEnterBeacon" arguments:args];
+        });
+    }
+    @catch (NSException *exception) {
+        NSLog(@"Error: %@", exception);
+    }
+}
+
+- (void)didExitBeacon:(MOCABeacon *)beacon {
+    @try {
+        // Convert the 'beacon' to an array of arguments.
+        NSArray *args = [self beaconToArgs:beacon];
+        
+        // Ensure the call is performed on the main thread.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.channel invokeMethod:@"onExitBeacon" arguments:args];
+        });
+    }
+    @catch (NSException *exception) {
+        NSLog(@"Error: %@", exception);
+    }
+}
+
+- (void)didRangeBeacon:(MOCABeacon *)beacon withProximity:(CLProximity)proximity { 
+    // ignore
+}
+
+
+- (NSArray *)groupToArgs:(MOCARegionGroup *)group {
+    // Create a mutable dictionary to hold the properties.
+    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+    
+    dict[@"name"] = group.name;
+    dict[@"id"] = group.identifier;
+    
+    // Wrap the dictionary in an array with an initial element (here, 0).
+    NSArray *args = @[@0, dict];
+    return args;
+}
+
+- (void)didEnterRegionGroup:(MOCARegionGroup *)group {
+    @try {
+        // Convert the 'beacon' to an array of arguments.
+        NSArray *args = [self groupToArgs:group];
+        
+        // Ensure the call is performed on the main thread.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.channel invokeMethod:@"onEnterRegionGroup" arguments:args];
+        });
+    }
+    @catch (NSException *exception) {
+        NSLog(@"Error: %@", exception);
+    }
+}
+
+- (void)didExitRegionGroup:(MOCARegionGroup *)group {
+    @try {
+        // Convert the 'beacon' to an array of arguments.
+        NSArray *args = [self groupToArgs:group];
+        
+        // Ensure the call is performed on the main thread.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.channel invokeMethod:@"onExitRegionGroup" arguments:args];
+        });
+    }
+    @catch (NSException *exception) {
+        NSLog(@"Error: %@", exception);
+    }
+}
+
+- (NSString *)observerId { 
+    return @"MocaFlutterPlugin";
+}
+
+#pragma mark MOCACustomActionHandler
+
+- (NSArray *)toCustomActionArgs:(MOCAExperience *)sender withAttribute:(NSString *)customAttribute {
+    // Create a mutable dictionary to hold the values.
+    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+    
+    // Set the "experience" key using the sender’s name.
+    dict[@"experience"] = sender.name;
+    dict[@"experienceId"] = sender.identifier;
+    dict[@"campaignId"] = sender.campaignId;
+    dict[@"campaign"] = sender.campaignName;
+
+    // Set the custom attribute.
+    if (customAttribute != nil) {
+        dict[@"customAttribute"] = customAttribute;
+    }
+    
+    // Wrap the dictionary in an array with a leading element (@0).
+    NSArray *args = @[@0, dict];
+    return args;
+}
+
+-(BOOL) performCustomAction:(MOCAExperience *) sender attribute:(NSString *) customAttribute {
+    
+    @try {
+        // Convert the 'beacon' to an array of arguments.
+        NSArray *args = [self toCustomActionArgs:sender withAttribute:customAttribute];
+        
+        // Ensure the call is performed on the main thread.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.channel invokeMethod:@"onCustomAction" arguments:args];
+        });
+        return YES;
+    }
+    @catch (NSException *exception) {
+        NSLog(@"Error: %@", exception);
+        return NO;
+    }
+    
+}
+
+
 
 @end

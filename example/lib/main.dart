@@ -5,7 +5,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/services.dart'; // Needed only for Clipboard
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:fluttertoast/fluttertoast.dart';
 
 void main() {
   runApp(MaterialApp(
@@ -101,15 +100,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             // Navigate to the product search page.
             Navigator.pushNamed(context, '/productSearch');
           } else {
-            // Check asynchronously if the external URL can be launched.
-            canLaunchUrl(url).then((canLaunch) {
-              if (canLaunch) {
-                // Open the URL in the default external browser.
-                launchUrl(url, mode: LaunchMode.externalApplication);
-              } else {
-                showMyToast("Cannot open deeplink $uri");
-              }
-            });
+             // Open the URL in the default external browser.
+             launchUrl(url, mode: LaunchMode.externalApplication);
           }
       }
     });
@@ -124,18 +116,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   Future<void> _setFlag(String key, bool value) async {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       await prefs.setBool(key, value);
-  }
-
-  void showMyToast(String message) {
-    Fluttertoast.showToast(
-      msg: message,
-      toastLength: Toast.LENGTH_SHORT, // LENGTH_SHORT or LENGTH_LONG
-      gravity: ToastGravity.BOTTOM,    // Position of the toast
-      timeInSecForIosWeb: 1,           // Duration for iOS and Web
-      backgroundColor: Colors.black54,
-      textColor: Colors.white,
-      fontSize: 16.0,
-    );
   }
 
   /// Requests push notification and location permissions.
