@@ -1,3 +1,5 @@
 pubspec.lock
 android/.idea
 .dart_tool
+Runner *
+Podfile.lock
