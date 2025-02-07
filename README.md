@@ -6,9 +6,7 @@
 
 ## Documentation
 
-See the Moca developer documentation [here](https://developer.mocaplatform.com).
-
-Then, see the Flutter package documentation [here](https://developer.mocaplatform.com/reference/flutter-sdk-install).
+See the Flutter package documentation [here](https://developer.mocaplatform.com/reference/flutter-sdk-install).
 
 ## Examples
 
