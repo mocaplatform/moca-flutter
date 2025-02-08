@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
   s.source_files = 'Classes/**/*'
   s.public_header_files = 'Classes/**/*.h'
   s.dependency 'Flutter'
-  s.dependency 'MocaSDK', '3.10.5'
+  s.dependency 'MocaSDK', '3.10.6'
   s.platform = :ios, '12.0'
   s.static_framework = true
 

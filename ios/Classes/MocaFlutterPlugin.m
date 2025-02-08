@@ -11,16 +11,19 @@
 #import <MocaSDK/MOCACustomActionHandler.h>
 
 @interface MocaFlutterPlugin() <UIApplicationDelegate,
+    UNUserNotificationCenterDelegate,
     PlaceEventsObserver,
     BeaconEventsObserver,
     RegionGroupEventsObserver,
-    MOCACustomActionHandler
+    MOCACustomActionHandler,
+    MOCANavigatorHandler
 >
 
 @property (strong, nonatomic) FlutterMethodChannel *channel;
 @property (strong, nonatomic) FlutterMethodChannel *backgroundChannel;
 @property (strong, nonatomic) FlutterEngine *sBackgroundFlutterEngine;
 @property (strong, nonatomic) CLLocationManager * locationManager;
+@property (weak, nonatomic) id<UNUserNotificationCenterDelegate> nextDelegate;
 @property (nonatomic) BOOL _initialized;
 
 @end
@@ -36,6 +39,14 @@
     [registrar addApplicationDelegate:instance];
     [registrar addMethodCallDelegate:instance channel:channel];
     
+    // Set the plugin instance as the delegate for UNUserNotificationCenter
+    UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+    if (center) {
+        if (center.delegate != nil) {
+            instance.nextDelegate = center.delegate;
+        }
+        center.delegate = instance;
+    }    
 }
 
 - (instancetype)init {
@@ -57,7 +68,14 @@ didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     return YES;
 }
 
-
+// Notify MOCA to perform background fetch and sync with the cloud.
+- (BOOL)performFetchWithCompletionHandler:(void (^)(UIBackgroundFetchResult))completionHandler {
+    if (MOCA.initialized) {
+        return [MOCA performFetchWithCompletionHandler:completionHandler];
+    }
+    return NO;
+}
+    
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
        willPresentNotification:(UNNotification *)notification
          withCompletionHandler:(void (^)(UNNotificationPresentationOptions options))completionHandler {
@@ -65,15 +83,10 @@ didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
         [MOCA userNotificationCenter:center
              willPresentNotification:notification
                withCompletionHandler:completionHandler];
-    }
-}
-
-- (void)userNotificationCenter:(UNUserNotificationCenter *)center
-        didReceiveNotification:(UNNotification *)notification
-         withCompletionHandler:(void (^)(void))completionHandler {
-    
-    if (MOCA.initialized && [MOCA isMocaNotification:notification]) {
-        [MOCA userNotificationCenter:center didReceiveNotification:notification withCompletionHandler:completionHandler];
+    } else if (self.nextDelegate != nil) {
+        // pass to next delegate
+        [self.nextDelegate userNotificationCenter:center
+                          willPresentNotification:notification withCompletionHandler:completionHandler];
     }
 }
 
@@ -84,6 +97,17 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
         [MOCA userNotificationCenter:center
       didReceiveNotificationResponse:response
                withCompletionHandler:completionHandler];
+    } else if (self.nextDelegate != nil) {
+        // pass to next delegate
+        [self.nextDelegate userNotificationCenter:center
+                   didReceiveNotificationResponse:response
+                            withCompletionHandler:completionHandler];
+    }
+}
+
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center openSettingsForNotification:(nullable UNNotification *)notification {
+    if (self.nextDelegate != nil) {
+        [self.nextDelegate userNotificationCenter:center openSettingsForNotification:notification];
     }
 }
 
@@ -103,6 +127,7 @@ didRegisterForRemoteNotificationsWithDeviceToken:(NSData *)deviceToken {
     }
 }
 
+
 #pragma mark MocaFlutterPlugin
 
 - (void)handleMethodCall:(FlutterMethodCall*)call result:(FlutterResult)result {
@@ -111,6 +136,8 @@ didRegisterForRemoteNotificationsWithDeviceToken:(NSData *)deviceToken {
             [self initializeSDK:call withResult:result];
         } else if ([@"registerBackgroundTask" isEqualToString:call.method]) {
             [self registerBackgroundTask:call withResult:result];
+        } else if ([@"setCustomNavigator" isEqualToString:call.method]) {
+            [self setCustomNavigator:call withResult:result];
         } else if ([@"setLogLevel" isEqualToString:call.method]) {
             [self setLogLevel:call withResult:result];
         } else if ([@"initialized" isEqualToString:call.method]) {
@@ -261,6 +288,23 @@ didRegisterForRemoteNotificationsWithDeviceToken:(NSData *)deviceToken {
 }
 
 - (void)registerBackgroundTask:(FlutterMethodCall *)call withResult:(FlutterResult)result {
+    //
+    // For this release, do not accept the task
+    //
+    result([FlutterError errorWithCode:@"MOCA_ERROR"
+                               message:@"Method not supported in this release."
+                               details:@"Please contact support@mocaplatform.com"]);
+}
+
+- (void)setCustomNavigator:(FlutterMethodCall *)call withResult:(FlutterResult)result {
+    NSDictionary *args = call.arguments;
+    BOOL enabled = [args[@"enabled"] boolValue];
+    if (enabled) {
+        MOCA.navigatorHandler = self;
+    } else {
+        MOCA.navigatorHandler = nil;
+    }
+    
     //
     // For this release, do not accept the task
     //
@@ -1138,6 +1182,33 @@ didRegisterForRemoteNotificationsWithDeviceToken:(NSData *)deviceToken {
     
 }
 
+// Called when a deep link has been triggered from MOCA SDK.
+// If implemented, the delegate is responsible for processing the provided url.
+// It must return TRUE to indicate the link was processed.
+// When it returns FALSE, the MOCA SDK performs the standard deep-link behavior.
+- (BOOL)handleDeepLink:(nonnull NSURL *)url
+     completionHandler:(nonnull void (^)(void))completionHandler {
+    @try {
+        if (!url) {
+            return NO;
+        }
+        // Create a mutable dictionary to hold the values.
+        NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+        dict[@"uri"] = [url absoluteString];
+        // Wrap the dictionary in an array with a leading element (@0).
+        NSArray *args = @[@0, dict];
+        
+        // Ensure the call is performed on the main thread.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.channel invokeMethod:@"onGotoUri" arguments:args];
+        });
+        return YES;
+    }
+    @catch (NSException *exception) {
+        NSLog(@"Error: %@", exception);
+        return NO;
+    }
+}
 
 
 @end

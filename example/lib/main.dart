@@ -123,43 +123,82 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   ///   - The permission is not yet granted.
   ///   - The info dialog has not been shown before (persisted via SharedPreferences).
   Future<void> _requestPermissions() async {
-    // --- Push Notifications ---
+
+    // await _requestPushPermission();
+    // await _requestLocationPermission();
+    // await _requestLocalDevicesPermission();
+  }
+
+  Future<void> _requestPushPermission() async {
+    // Check current push notification permission status.
     PermissionStatus notificationStatus = await Permission.notification.status;
     if (notificationStatus.isGranted) {
       print("Push notifications permission already granted.");
-    } else {
-      bool pushAsked = await _getFlag('pushPermissionAsked');
-      if (!pushAsked) {
-        await _showInfoDialog(
-          title: "Push Notifications",
-          message:
-              "We use push notifications to keep you updated about local events, exclusive offers, and personalized experiences based on your location. Tap 'Continue' to enable push notifications.",
-        );
-        await _setFlag('pushPermissionAsked', true);
-      }
-      // Request push notification permission from the OS.
-      PermissionStatus newNotificationStatus = await Permission.notification.request();
-      print("Notification permission status: $newNotificationStatus");
+      return;
     }
 
+    // Use a separate flag for push notifications.
+    bool pushDialogShown = await _getFlag('pushPermissionDialogShown');
+    if (!pushDialogShown) {
+      // Show your custom info dialog first.
+      await _showInfoDialog(
+        title: "Push Notifications",
+        message:
+            "We use push notifications to keep you updated about local events, exclusive offers, and personalized experiences based on your location. Tap 'Continue' to enable push notifications.",
+      );
+      // Now request the OS push notification permission.
+      PermissionStatus newNotificationStatus = await Permission.notification.request();
+      print("Notification permission status: $newNotificationStatus");
+      // Save the flag AFTER the OS dialog is requested.
+      await _setFlag('pushPermissionDialogShown', true);
+    }
+  }
 
-    // --- Location Access ---
+  Future<void> _requestLocationPermission() async {
+    // Check current location permission status.
     PermissionStatus locationStatus = await Permission.location.status;
     if (locationStatus.isGranted) {
       print("Location permission already granted.");
-    } else {
-      bool locationAsked = await _getFlag('locationPermissionAsked');
-      if (!locationAsked) {
-        await _showInfoDialog(
-          title: "Location Access",
-          message:
-              "This app uses your location to deliver personalized, location-based experiences such as local deals and event recommendations. Tap 'Continue' to enable location services.",
-        );
-        await _setFlag('locationPermissionAsked', true);
-      }
-      // Request location permission from the OS.
+      return;
+    }
+
+    // Use a separate flag for location permissions.
+    bool locationDialogShown = await _getFlag('locationPermissionDialogShown');
+    if (!locationDialogShown) {
+      // Show your custom info dialog.
+      await _showInfoDialog(
+        title: "Location Access",
+        message:
+            "This app uses your location to deliver personalized, location-based experiences such as local deals and event recommendations. Tap 'Continue' to enable location services.",
+      );
+      // Request the OS location permission.
       PermissionStatus newLocationStatus = await Permission.location.request();
       print("Location permission status: $newLocationStatus");
+      // Save the flag only after the OS dialog is requested.
+      await _setFlag('locationPermissionDialogShown', true);
+    }
+  }
+
+  Future<void> _requestLocalDevicesPermission() async {
+    // Check the current status of the Bluetooth permission.
+    PermissionStatus status = await Permission.bluetooth.status;
+    if (!status.isGranted) {
+      // Replace this with the actual local device permission flow if needed.
+      // Here we assume a similar custom-dialog flow, even if there isn’t an OS dialog.
+      bool localDevicesDialogShown = await _getFlag('localDevicesPermissionDialogShown');
+      if (!localDevicesDialogShown) {
+        await _showInfoDialog(
+          title: "Local Devices",
+          message:
+              "This app uses local device permissions for certain features. Tap 'Continue' to enable.",
+        );
+        // Request the Bluetooth permission.
+        PermissionStatus newStatus = await Permission.bluetooth.request();
+        print("Location permission status: $newStatus");
+        // If there were an OS dialog to request a permission, you would call it here.
+        // For now, simply store the flag.
+        await _setFlag('localDevicesPermissionDialogShown', true);
+      }
     }
   }
 
